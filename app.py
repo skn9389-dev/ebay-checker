@@ -44,11 +44,16 @@ RISK_WORDS: list[tuple[str, int, str]] = [
 ]
 
 BRAND_NAMES: list[str] = [
-    "louis vuitton", "lv", "gucci", "chanel", "prada", "hermes", "hermès",
+    "louis vuitton", "gucci", "chanel", "prada", "hermes", "hermès",
     "rolex", "omega", "patek philippe", "cartier", "breitling",
     "nike", "adidas", "supreme", "off-white", "balenciaga", "yeezy",
     "apple", "airpods", "iphone", "samsung", "sony",
     "coach", "michael kors", "kate spade", "burberry",
+]
+
+BRAND_DANGER_COMBOS: list[str] = [
+    "replica", "fake", "copy", "knockoff", "imitation",
+    "inspired", "style", "aaa", "1:1", "super copy",
 ]
 
 # ─────────────────────────────────────────────
@@ -67,22 +72,29 @@ class CheckResult:
     safe_title: str = ""
 
 
-def _score_text(text: str) -> tuple[int, list[str], list[str]]:
+def _score_text(text: str) -> tuple[int, list[str], list[str], list[str]]:
     lower = text.lower()
     max_score = 0
-    detected, reasons = [], []
+    detected, reasons, brand_notes = [], [], []
+
+    # ① 危険ワードチェック（スコアに加算）
     for pattern, score, reason in RISK_WORDS:
         if re.search(pattern, lower, re.IGNORECASE):
             m = re.search(pattern, lower, re.IGNORECASE)
             detected.append(m.group(0) if m else pattern)
             reasons.append(reason)
             max_score = max(max_score, score)
-    for brand in BRAND_NAMES:
-        if brand in lower and brand not in detected:
-            detected.append(brand)
-            reasons.append(f"有名ブランド名「{brand}」を含む（真正品の証明が必要）")
-            max_score = max(max_score, max_score + 10 if max_score > 0 else 15)
-    return min(max_score, 100), detected, reasons
+
+    # ② ブランド名チェック（スコアに加算しない）
+    found_brands = [b for b in BRAND_NAMES if b in lower]
+    if found_brands:
+        for combo in BRAND_DANGER_COMBOS:
+            if combo in lower:
+                max_score = max(max_score, 85)
+                break
+        brand_notes.append(f"ブランド名を含む: {', '.join(found_brands)} ※真正品なら問題なし")
+
+    return min(max_score, 100), detected, reasons, brand_notes
 
 
 def _risk_level(score: int) -> str:
@@ -100,7 +112,7 @@ def _safe_title(title: str, detected: list[str]) -> str:
 
 
 def check_row(index: int, title: str, desc: str) -> CheckResult:
-    score, detected, reasons = _score_text(f"{title} {desc}")
+    score, detected, reasons, brand_notes = _score_text(f"{title} {desc}")
     return CheckResult(
         row_index=index,
         original_title=title,
@@ -108,7 +120,7 @@ def check_row(index: int, title: str, desc: str) -> CheckResult:
         risk_score=score,
         risk_level=_risk_level(score),
         detected_words=detected,
-        reasons=reasons,
+        reasons=reasons + brand_notes,
         safe_title=_safe_title(title, detected),
     )
 

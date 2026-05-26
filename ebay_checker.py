@@ -46,13 +46,20 @@ RISK_WORDS: list[tuple[str, int, str]] = [
     # 有名ブランド名＋疑惑語の組み合わせチェックは後述の BRAND_RISK で実施
 ]
 
-# ブランド名単独で出現したとき追加チェックするキーワード
+# ブランド名は「注意メモ」として表示するだけ → スコアに加算しない
+# 真正品を出品している場合はブランド名を書いてOKなので削除しない
 BRAND_NAMES: list[str] = [
-    "louis vuitton", "lv", "gucci", "chanel", "prada", "hermes", "hermès",
+    "louis vuitton", "gucci", "chanel", "prada", "hermes", "hermès",
     "rolex", "omega", "patek philippe", "cartier", "breitling",
     "nike", "adidas", "supreme", "off-white", "balenciaga", "yeezy",
     "apple", "airpods", "iphone", "samsung", "sony",
     "coach", "michael kors", "kate spade", "burberry",
+]
+
+# ブランド名と一緒に使うと危険な組み合わせワード
+BRAND_DANGER_COMBOS: list[str] = [
+    "replica", "fake", "copy", "knockoff", "imitation",
+    "inspired", "style", "aaa", "1:1", "super copy",
 ]
 
 # ─────────────────────────────────────────────
@@ -82,7 +89,9 @@ def _score_text(text: str) -> tuple[int, list[str], list[str]]:
     max_score = 0
     detected: list[str] = []
     reasons: list[str] = []
+    brand_notes: list[str] = []  # ブランド名は別管理（スコアに加算しない）
 
+    # ① 危険ワードをチェック（スコアに加算）
     for pattern, score, reason in RISK_WORDS:
         if re.search(pattern, lower, re.IGNORECASE):
             match = re.search(pattern, lower, re.IGNORECASE)
@@ -91,14 +100,22 @@ def _score_text(text: str) -> tuple[int, list[str], list[str]]:
             reasons.append(reason)
             max_score = max(max_score, score)
 
-    # ブランド名が含まれるだけでも軽いフラグ
+    # ② ブランド名チェック（スコアには加算しない・注意メモのみ）
+    found_brands = []
     for brand in BRAND_NAMES:
-        if brand in lower and brand not in detected:
-            detected.append(brand)
-            reasons.append(f"有名ブランド名「{brand}」を含む（真正品の証明が必要）")
-            max_score = max(max_score, max_score + 10 if max_score > 0 else 15)
+        if brand in lower:
+            found_brands.append(brand)
 
-    return min(max_score, 100), detected, reasons
+    if found_brands:
+        # ブランド名＋危険ワードの組み合わせがある場合だけスコアに加算
+        for combo in BRAND_DANGER_COMBOS:
+            if combo in lower:
+                max_score = max(max_score, 85)
+                break
+        # 注意メモとして追加（SAFEでも表示）
+        brand_notes.append(f"ブランド名を含む: {', '.join(found_brands)} ※真正品なら問題なし")
+
+    return min(max_score, 100), detected, reasons, brand_notes
 
 
 def _risk_level(score: int) -> str:
@@ -121,9 +138,12 @@ def _safe_title(title: str, detected: list[str]) -> str:
 
 def check_row(index: int, title: str, desc: str) -> CheckResult:
     combined = f"{title} {desc}"
-    score, detected, reasons = _score_text(combined)
+    score, detected, reasons, brand_notes = _score_text(combined)
     level = _risk_level(score)
     safe = _safe_title(title, detected)
+
+    # ブランド注意メモをreasonsに追加（スコアには影響しない）
+    all_reasons = reasons + brand_notes
 
     # description の危険語を [FLAGGED: 理由] に置換
     modified_desc = desc
@@ -142,7 +162,7 @@ def check_row(index: int, title: str, desc: str) -> CheckResult:
         risk_score=score,
         risk_level=level,
         detected_words=detected,
-        reasons=reasons,
+        reasons=all_reasons,
         safe_title=safe,
         modified_desc=modified_desc,
     )
